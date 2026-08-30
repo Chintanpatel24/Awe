@@ -9,13 +9,13 @@ Item {
 
     // Position & sizing properties
     property real posX: 10
-    property real posY: 517
-    property real scaleFactor: 0.8
+    property real posY: 450
+    property real scaleFactor: 0.85
 
     x: Math.max(10, Math.min(root.screenWidth - root.width - 10, posX))
     y: Math.max(10, Math.min(root.screenHeight - root.height - 10, posY))
-    width: Math.round(380 * scaleFactor)
-    height: Math.round(190 * scaleFactor)
+    width: Math.round(340 * scaleFactor)
+    height: Math.round(380 * scaleFactor)
 
     // ─── Settings Persistence ───
     Process {
@@ -28,8 +28,8 @@ Item {
                     var data = JSON.parse(text)
                     if (data.media) {
                         if (data.media.scale !== undefined) root.scaleFactor = Math.max(0.5, Math.min(2.5, data.media.scale))
-                        var w = Math.round(380 * root.scaleFactor)
-                        var h = Math.round(190 * root.scaleFactor)
+                        var w = Math.round(340 * root.scaleFactor)
+                        var h = Math.round(380 * root.scaleFactor)
                         if (data.media.x !== undefined) root.posX = Math.max(10, Math.min(root.screenWidth - w - 10, data.media.x))
                         if (data.media.y !== undefined) root.posY = Math.max(10, Math.min(root.screenHeight - h - 10, data.media.y))
                     }
@@ -49,12 +49,59 @@ Item {
         saveSettingsProc.running = true
     }
 
-    // ─── Built-in Demo Playlist for Seamless Playback ───
+    // ─── Built-in Demo Playlist & Lyrics ───
     property var demoTracks: [
-        { title: "Pretty Patterns", artist: "ATLAS", duration: 225 },
-        { title: "Midnight Horizon", artist: "Pixel Waves", duration: 198 },
-        { title: "Summer Breeze", artist: "California Drive", duration: 240 },
-        { title: "Neon Sunset", artist: "Studio M3", duration: 210 }
+        {
+            title: "Pretty Patterns",
+            artist: "ATLAS",
+            duration: 225,
+            lyrics: [
+                "And if the stars aligned in the clear night sky",
+                "Would you remind me of how the time flies?",
+                "I just want to feel your touch but I'm alive",
+                "If fading is a chance to bring a new dawn",
+                "Erasing all the haste to grieve in my flaws",
+                "As the light comes looking for the morning",
+                "We are searchers looking for a place to stay"
+            ]
+        },
+        {
+            title: "Midnight Horizon",
+            artist: "Pixel Waves",
+            duration: 198,
+            lyrics: [
+                "Driving through the neon lights tonight",
+                "City shadows fading in the rear view mirror",
+                "Electric pulse echoing through the dark",
+                "We chase the horizon until the sunrise",
+                "Fading into memories of silver and blue",
+                "Lost in the rhythm of the endless road"
+            ]
+        },
+        {
+            title: "Summer Breeze",
+            artist: "California Drive",
+            duration: 240,
+            lyrics: [
+                "Golden sunlight streaming through the trees",
+                "Warm air whispering sweet melodies",
+                "Ocean waves crash softly on the shore",
+                "Moments like this could last forevermore",
+                "Summer breeze carry all our worries away"
+            ]
+        },
+        {
+            title: "Neon Sunset",
+            artist: "Studio M3",
+            duration: 210,
+            lyrics: [
+                "Colors bleeding across the twilight sky",
+                "Synthesizers hum a calm lullaby",
+                "Reflections glowing on the pavement wet",
+                "Lost inside this glowing neon sunset",
+                "Until tomorrow brings another day"
+            ]
+        }
     ]
     property int currentDemoTrackIndex: 0
 
@@ -69,6 +116,8 @@ Item {
     property string lenStr: "3:45"
     property real progress: 0.32
     property bool hasActivePlayer: false
+    property var currentLyrics: []
+    property int activeLyricIndex: 2
 
     function fmtTime(seconds) {
         var m = Math.floor(seconds / 60)
@@ -96,18 +145,10 @@ Item {
                 root.status = (root.status === "Playing") ? "Paused" : "Playing"
             } else if (action === "next") {
                 root.currentDemoTrackIndex = (root.currentDemoTrackIndex + 1) % root.demoTracks.length
-                var nextTrk = root.demoTracks[root.currentDemoTrackIndex]
-                root.title = nextTrk.title
-                root.artist = nextTrk.artist
-                root.lengthSec = nextTrk.duration
-                root.positionSec = 0
+                root.loadDemoTrack(root.currentDemoTrackIndex)
             } else if (action === "previous") {
                 root.currentDemoTrackIndex = (root.currentDemoTrackIndex - 1 + root.demoTracks.length) % root.demoTracks.length
-                var prevTrk = root.demoTracks[root.currentDemoTrackIndex]
-                root.title = prevTrk.title
-                root.artist = prevTrk.artist
-                root.lengthSec = prevTrk.duration
-                root.positionSec = 0
+                root.loadDemoTrack(root.currentDemoTrackIndex)
             } else if (action === "rewind") {
                 root.positionSec = Math.max(0, root.positionSec - 10)
             } else if (action === "forward") {
@@ -117,10 +158,26 @@ Item {
         }
     }
 
+    function loadDemoTrack(idx) {
+        var trk = root.demoTracks[idx]
+        root.title = trk.title
+        root.artist = trk.artist
+        root.lengthSec = trk.duration
+        root.positionSec = 0
+        root.currentLyrics = trk.lyrics
+        root.updateTimes()
+    }
+
     function updateTimes() {
         root.posStr = root.fmtTime(root.positionSec)
         root.lenStr = root.lengthSec > 0 ? root.fmtTime(root.lengthSec) : "0:00"
         root.progress = root.lengthSec > 0 ? Math.min(1.0, root.positionSec / root.lengthSec) : 0
+
+        if (root.currentLyrics && root.currentLyrics.length > 0) {
+            var step = root.lengthSec / root.currentLyrics.length
+            var calculatedIdx = Math.floor(root.positionSec / (step > 0 ? step : 1))
+            root.activeLyricIndex = Math.max(0, Math.min(root.currentLyrics.length - 1, calculatedIdx))
+        }
     }
 
     // ─── MPRIS Process Query ───
@@ -134,9 +191,18 @@ Item {
                 if (line.length > 0 && line.includes(";;") && !line.includes("No players found")) {
                     var parts = line.split(";;")
                     root.hasActivePlayer = true
-                    root.title = parts[0] || "Unknown Title"
-                    root.artist = parts[1] || "Unknown Artist"
-                    root.artUrl = parts[2] || ""
+                    var newTitle = parts[0] || "Unknown Title"
+                    if (newTitle !== root.title) {
+                        root.title = newTitle
+                        root.artist = parts[1] || "Unknown Artist"
+                        root.artUrl = parts[2] || ""
+                        // Default fallback lyrics for external MPRIS tracks
+                        root.currentLyrics = [
+                            "Playing via system MPRIS player...",
+                            "Enjoying " + root.title + " by " + root.artist,
+                            "Listening live on desktop widget"
+                        ]
+                    }
 
                     var posMicro = parseFloat(parts[3]) || 0
                     var lenMicro = parseFloat(parts[4]) || 0
@@ -146,7 +212,10 @@ Item {
 
                     root.updateTimes()
                 } else {
-                    root.hasActivePlayer = false
+                    if (root.hasActivePlayer) {
+                        root.hasActivePlayer = false
+                        root.loadDemoTrack(root.currentDemoTrackIndex)
+                    }
                 }
             }
         }
@@ -169,116 +238,305 @@ Item {
 
     Component.onCompleted: {
         loadSettingsProc.running = true
+        root.loadDemoTrack(0)
         mediaProc.running = true
     }
 
-    // ─── Material You / M3 Dark Palette ───
-    readonly property color colBg: "#2B353A"              // Android Pixel Dark Slate Card
-    readonly property color colPillBg: "#3D484E"          // Control Pill / Inactive Track
+    // ─── Material You / M3 Dark Slate Palette ───
+    readonly property color colBg: "#293237"              // Deep M3 Slate Dark Card
+    readonly property color colHeaderBg: "#1F262A"          // Slightly darker top header card
+    readonly property color colPillBg: "#3A464C"          // Control Pill Fill
     readonly property color colAccent: "#C2E7FF"          // M3 Light Cyan Active Accent
     readonly property color colAccentDark: "#1E2A30"      // Dark Fill for Scalloped Button Icon
     readonly property color colTextPrimary: "#E1E2E5"
-    readonly property color colTextSecondary: "#A0ACAC"
+    readonly property color colTextSecondary: "#9AA8AD"
+    readonly property color colTextFaded: "#5A676D"
 
     // ─── Scaled Visual Content ───
     Item {
         id: scaledContent
-        width: 380
-        height: 190
+        width: 340
+        height: 380
         scale: root.scaleFactor
         transformOrigin: Item.TopLeft
 
         Rectangle {
             anchors.fill: parent
             color: root.colBg
-            radius: 28
+            radius: 36
             antialiasing: true
 
             Column {
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 10
+                anchors.margins: 16
+                spacing: 16
 
-                // Top Section: Album Art + Song Title/Artist
-                Row {
+                // ─── Header Section (Album Art + Song Title/Artist + Quick M3 Controls) ───
+                Rectangle {
                     width: parent.width
-                    height: 80
-                    spacing: 12
+                    height: 100
+                    radius: 28
+                    color: root.colHeaderBg
+                    antialiasing: true
 
-                    // Album Art Squircle
-                    Rectangle {
-                        width: 80
-                        height: 80
-                        radius: 20
-                        color: root.colPillBg
-                        clip: true
-                        antialiasing: true
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 12
 
-                        Image {
-                            anchors.fill: parent
-                            source: root.artUrl
-                            fillMode: Image.PreserveAspectCrop
-                            visible: root.artUrl.length > 0 && status === Image.Ready
-                            asynchronous: true
-                        }
+                        // Album Art Cover
+                        Rectangle {
+                            width: 80
+                            height: 80
+                            radius: 20
+                            color: root.colPillBg
+                            clip: true
+                            antialiasing: true
 
-                        // Pixel Fallback Vector Art
-                        Item {
-                            anchors.fill: parent
-                            visible: !root.artUrl || root.artUrl.length === 0
-
-                            Rectangle {
+                            Image {
                                 anchors.fill: parent
-                                color: "#3B474D"
+                                source: root.artUrl
+                                fillMode: Image.PreserveAspectCrop
+                                visible: root.artUrl.length > 0 && status === Image.Ready
+                                asynchronous: true
                             }
 
-                            Canvas {
+                            // Fallback Material Vector Art
+                            Item {
                                 anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.fillStyle = "#A2C9C2"
-                                    ctx.beginPath()
-                                    ctx.arc(40, 40, 26, 0, Math.PI * 2)
-                                    ctx.fill()
-                                    ctx.fillStyle = "#2B353A"
-                                    ctx.beginPath()
-                                    ctx.arc(40, 40, 9, 0, Math.PI * 2)
-                                    ctx.fill()
+                                visible: !root.artUrl || root.artUrl.length === 0
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: "#374349"
+                                }
+
+                                Canvas {
+                                    anchors.fill: parent
+                                    antialiasing: true
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
+                                        ctx.fillStyle = "#A2C9C2"
+                                        ctx.beginPath()
+                                        ctx.arc(40, 40, 26, 0, Math.PI * 2)
+                                        ctx.fill()
+                                        ctx.fillStyle = root.colHeaderBg
+                                        ctx.beginPath()
+                                        ctx.arc(40, 40, 9, 0, Math.PI * 2)
+                                        ctx.fill()
+                                    }
+                                }
+                            }
+                        }
+
+                        // Track Meta & M3 Action Controls Row
+                        Column {
+                            width: parent.width - 80 - 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+
+                            // Track Title & Artist
+                            Column {
+                                width: parent.width
+                                spacing: 2
+
+                                Text {
+                                    text: root.title
+                                    color: root.colTextPrimary
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    width: parent.width
+                                    font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
+                                }
+
+                                Text {
+                                    text: root.artist
+                                    color: root.colTextSecondary
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                    width: parent.width
+                                    font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
+                                }
+                            }
+
+                            // Quick Header Action Controls (Cast, Scalloped Play/Pause, Next)
+                            Row {
+                                width: parent.width
+                                spacing: 10
+
+                                Item {
+                                    width: Math.max(0, parent.width - 100)
+                                    height: 1
+                                }
+
+                                // Cast / Device Pill Button
+                                Rectangle {
+                                    width: 28
+                                    height: 28
+                                    radius: 14
+                                    color: root.colPillBg
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    antialiasing: true
+
+                                    Canvas {
+                                        anchors.fill: parent
+                                        antialiasing: true
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.reset()
+                                            ctx.strokeStyle = root.colTextSecondary
+                                            ctx.lineWidth = 1.6
+                                            ctx.strokeRect(8, 8, 12, 9)
+                                            ctx.fillStyle = root.colTextSecondary
+                                            ctx.fillRect(12, 17, 4, 3)
+                                        }
+                                    }
+                                }
+
+                                // Scalloped Play/Pause Button (Matching player.png)
+                                Item {
+                                    width: 34
+                                    height: 34
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Canvas {
+                                        id: headerScallopCanvas
+                                        anchors.fill: parent
+                                        antialiasing: true
+
+                                        Connections {
+                                            target: root
+                                            function onStatusChanged() { headerScallopCanvas.requestPaint() }
+                                        }
+
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.reset()
+                                            var cx = width / 2
+                                            var cy = height / 2
+                                            var rOuter = 16
+                                            var rInner = 13.5
+                                            var points = 12
+
+                                            ctx.beginPath()
+                                            for (var i = 0; i < points * 2; i++) {
+                                                var angle = (i * Math.PI) / points
+                                                var r = (i % 2 === 0) ? rOuter : rInner
+                                                var x = cx + r * Math.cos(angle)
+                                                var y = cy + r * Math.sin(angle)
+                                                if (i === 0) ctx.moveTo(x, y)
+                                                else ctx.lineTo(x, y)
+                                            }
+                                            ctx.closePath()
+                                            ctx.fillStyle = root.colAccent
+                                            ctx.fill()
+
+                                            ctx.fillStyle = root.colAccentDark
+                                            if (root.status === "Playing") {
+                                                ctx.fillRect(cx - 4.5, cy - 5.5, 3.5, 11)
+                                                ctx.fillRect(cx + 1, cy - 5.5, 3.5, 11)
+                                            } else {
+                                                ctx.beginPath()
+                                                ctx.moveTo(cx - 3, cy - 6)
+                                                ctx.lineTo(cx + 5, cy)
+                                                ctx.lineTo(cx - 3, cy + 6)
+                                                ctx.closePath()
+                                                ctx.fill()
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: root.sendMediaCmd("play-pause")
+                                    }
+                                }
+
+                                // Next Button
+                                Item {
+                                    width: 28
+                                    height: 28
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Canvas {
+                                        anchors.fill: parent
+                                        antialiasing: true
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.reset()
+                                            ctx.fillStyle = root.colTextPrimary
+                                            ctx.beginPath()
+                                            ctx.moveTo(8, 8)
+                                            ctx.lineTo(16, 14)
+                                            ctx.lineTo(8, 20)
+                                            ctx.closePath()
+                                            ctx.fill()
+                                            ctx.fillRect(18, 8, 2, 12)
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: root.sendMediaCmd("next")
+                                    }
                                 }
                             }
                         }
                     }
+                }
 
-                    // Title & Artist Column
+                // ─── Lyrics Section (Exact visual match to player.png) ───
+                Item {
+                    width: parent.width
+                    height: 200
+                    clip: true
+
                     Column {
-                        width: parent.width - 80 - 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 4
+                        anchors.centerIn: parent
+                        width: parent.width
+                        spacing: 12
 
-                        Text {
-                            text: root.title
-                            color: root.colTextPrimary
-                            font.pixelSize: 16
-                            font.bold: true
-                            elide: Text.ElideRight
-                            width: parent.width
-                            font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
-                        }
+                        Repeater {
+                            model: root.currentLyrics
 
-                        Text {
-                            text: root.artist
-                            color: root.colTextSecondary
-                            font.pixelSize: 13
-                            elide: Text.ElideRight
-                            width: parent.width
-                            font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
+                            Text {
+                                text: modelData
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                elide: Text.ElideRight
+                                maximumLineCount: 2
+                                font.pixelSize: index === root.activeLyricIndex ? 15 : (Math.abs(index - root.activeLyricIndex) === 1 ? 13 : 11)
+                                font.bold: index === root.activeLyricIndex
+                                color: index === root.activeLyricIndex ? "#FFFFFF" : (Math.abs(index - root.activeLyricIndex) === 1 ? root.colTextSecondary : root.colTextFaded)
+                                opacity: index === root.activeLyricIndex ? 1.0 : (Math.abs(index - root.activeLyricIndex) === 1 ? 0.6 : 0.25)
+                                font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
+
+                                Behavior on opacity { NumberAnimation { duration: 250 } }
+                                Behavior on font.pixelSize { NumberAnimation { duration: 200 } }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        root.activeLyricIndex = index
+                                        if (root.currentLyrics.length > 0) {
+                                            root.positionSec = Math.round((index / root.currentLyrics.length) * root.lengthSec)
+                                            root.updateTimes()
+                                            if (root.hasActivePlayer) {
+                                                controlProc.command = ["playerctl", "position", root.positionSec]
+                                                controlProc.running = true
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // Middle Section: Material 3 Progress Track with Thumb Handle
+                // ─── Bottom Progress Bar & Seek Handle ───
                 Column {
                     width: parent.width
                     spacing: 4
@@ -286,32 +544,29 @@ Item {
                     Item {
                         id: progressTrack
                         width: parent.width
-                        height: 14
+                        height: 12
 
-                        // Inactive Track
                         Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             width: parent.width
-                            height: 6
-                            radius: 3
+                            height: 4
+                            radius: 2
                             color: root.colPillBg
                             antialiasing: true
                         }
 
-                        // Active Track (Accent Pill)
                         Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
-                            width: Math.max(6, parent.width * root.progress)
-                            height: 6
-                            radius: 3
+                            width: Math.max(4, parent.width * root.progress)
+                            height: 4
+                            radius: 2
                             color: root.colAccent
                             antialiasing: true
                         }
 
-                        // M3 Slider Thumb Handle Indicator
                         Rectangle {
                             width: 6
-                            height: 14
+                            height: 12
                             radius: 3
                             color: root.colAccent
                             x: Math.min(parent.width - width, Math.max(0, parent.width * root.progress - width / 2))
@@ -319,7 +574,6 @@ Item {
                             antialiasing: true
                         }
 
-                        // Interactive Seek Click/Drag
                         MouseArea {
                             anchors.fill: parent
                             onClicked: (mouse) => {
@@ -335,7 +589,6 @@ Item {
                         }
                     }
 
-                    // Duration Timers Row
                     Row {
                         width: parent.width
 
@@ -358,217 +611,6 @@ Item {
                             font.pixelSize: 10
                             font.bold: true
                             font.family: "Google Sans Flex, Google Sans, Inter, monospace"
-                        }
-                    }
-                }
-
-                // Bottom Section: Complete Playback Controls Row (Rewind, Prev, Play/Pause Scallop, Next, Forward)
-                Rectangle {
-                    width: parent.width
-                    height: 48
-                    radius: 24
-                    color: root.colPillBg
-                    antialiasing: true
-
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 12
-
-                        // Rewind (-10s) Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.strokeStyle = root.colTextPrimary
-                                    ctx.lineWidth = 1.8
-                                    ctx.beginPath()
-                                    ctx.arc(16, 16, 9, Math.PI * 0.2, Math.PI * 1.8, true)
-                                    ctx.stroke()
-
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.beginPath()
-                                    ctx.moveTo(8, 8)
-                                    ctx.lineTo(13, 11)
-                                    ctx.lineTo(12, 6)
-                                    ctx.closePath()
-                                    ctx.fill()
-
-                                    ctx.font = "bold 8px sans-serif"
-                                    ctx.textAlign = "center"
-                                    ctx.textBaseline = "middle"
-                                    ctx.fillText("10", 16, 17)
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("rewind")
-                            }
-                        }
-
-                        // Previous Track Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.fillRect(9, 10, 2, 12)
-                                    ctx.beginPath()
-                                    ctx.moveTo(21, 10)
-                                    ctx.lineTo(13, 16)
-                                    ctx.lineTo(21, 22)
-                                    ctx.closePath()
-                                    ctx.fill()
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("previous")
-                            }
-                        }
-
-                        // Scalloped Play / Pause Main Button (Pixel M3 Style)
-                        Item {
-                            width: 42
-                            height: 42
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                id: scallopCanvas
-                                anchors.fill: parent
-                                antialiasing: true
-
-                                Connections {
-                                    target: root
-                                    function onStatusChanged() { scallopCanvas.requestPaint() }
-                                }
-
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    var cx = width / 2
-                                    var cy = height / 2
-                                    var rOuter = 20
-                                    var rInner = 16.5
-                                    var points = 12
-
-                                    // Scalloped Background
-                                    ctx.beginPath()
-                                    for (var i = 0; i < points * 2; i++) {
-                                        var angle = (i * Math.PI) / points
-                                        var r = (i % 2 === 0) ? rOuter : rInner
-                                        var x = cx + r * Math.cos(angle)
-                                        var y = cy + r * Math.sin(angle)
-                                        if (i === 0) ctx.moveTo(x, y)
-                                        else ctx.lineTo(x, y)
-                                    }
-                                    ctx.closePath()
-                                    ctx.fillStyle = root.colAccent
-                                    ctx.fill()
-
-                                    // Vector Play / Pause Icon
-                                    ctx.fillStyle = root.colAccentDark
-                                    if (root.status === "Playing") {
-                                        ctx.fillRect(cx - 5.5, cy - 7, 4, 14)
-                                        ctx.fillRect(cx + 1.5, cy - 7, 4, 14)
-                                    } else {
-                                        ctx.beginPath()
-                                        ctx.moveTo(cx - 4, cy - 8)
-                                        ctx.lineTo(cx + 7, cy)
-                                        ctx.lineTo(cx - 4, cy + 8)
-                                        ctx.closePath()
-                                        ctx.fill()
-                                    }
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("play-pause")
-                            }
-                        }
-
-                        // Next Track Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.beginPath()
-                                    ctx.moveTo(11, 10)
-                                    ctx.lineTo(19, 16)
-                                    ctx.lineTo(11, 22)
-                                    ctx.closePath()
-                                    ctx.fill()
-                                    ctx.fillRect(21, 10, 2, 12)
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("next")
-                            }
-                        }
-
-                        // Forward (+10s) Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.strokeStyle = root.colTextPrimary
-                                    ctx.lineWidth = 1.8
-                                    ctx.beginPath()
-                                    ctx.arc(16, 16, 9, Math.PI * 1.2, Math.PI * 0.8, false)
-                                    ctx.stroke()
-
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.beginPath()
-                                    ctx.moveTo(24, 8)
-                                    ctx.lineTo(19, 11)
-                                    ctx.lineTo(20, 6)
-                                    ctx.closePath()
-                                    ctx.fill()
-
-                                    ctx.font = "bold 8px sans-serif"
-                                    ctx.textAlign = "center"
-                                    ctx.textBaseline = "middle"
-                                    ctx.fillText("10", 16, 17)
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("forward")
-                            }
                         }
                     }
                 }
