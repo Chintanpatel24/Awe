@@ -4,213 +4,241 @@ import Quickshell.Io
 
 Item {
     id: root
+
     property real screenWidth: 1920
     property real screenHeight: 1080
+    property real posX: 80
+    property real posY: 200
+    property real scaleFactor: 1.0
 
-    // Position & sizing properties
-    property real posX: 10
-    property real posY: 517
-    property real scaleFactor: 0.8
+    // Layout size (design size 360×420)
+    readonly property int designW: 360
+    readonly property int designH: 420
 
-    x: Math.max(10, Math.min(root.screenWidth - root.width - 10, posX))
-    y: Math.max(10, Math.min(root.screenHeight - root.height - 10, posY))
-    width: Math.round(380 * scaleFactor)
-    height: Math.round(190 * scaleFactor)
+    width: Math.round(designW * scaleFactor)
+    height: Math.round(designH * scaleFactor)
+    x: Math.max(10, Math.min(screenWidth - width - 10, posX))
+    y: Math.max(10, Math.min(screenHeight - height - 10, posY))
 
-    // ─── Settings Persistence ───
+    // ── Media state ──
+    property string title: "No media playing"
+    property string artist: "Open a player (Spotify, browser…)"
+    property string artUrl: ""
+    property string status: "Stopped"   // Playing | Paused | Stopped
+    property real positionSec: 0
+    property real lengthSec: 0
+    property bool hasPlayer: false
+
+    property string posStr: "0:00"
+    property string lenStr: "0:00"
+    property real progress: 0
+
+    // M3 palette (dark)
+    readonly property color colBg: "#2B3236"
+    readonly property color colPill: "#3F484C"
+    readonly property color colAccent: "#C2E7FF"
+    readonly property color colOnAccent: "#1E2A30"
+    readonly property color colText: "#E3E2E6"
+    readonly property color colMuted: "#A0A8AC"
+
+    function fmtTime(sec) {
+        sec = Math.max(0, Math.floor(sec))
+        var m = Math.floor(sec / 60)
+        var s = sec % 60
+        return m + ":" + (s < 10 ? "0" + s : s)
+    }
+
+    function updateProgress() {
+        posStr = fmtTime(positionSec)
+        lenStr = lengthSec > 0 ? fmtTime(lengthSec) : "0:00"
+        progress = lengthSec > 0 ? Math.min(1, positionSec / lengthSec) : 0
+    }
+
+    // ── Run a playerctl command (restart-safe) ──
     Process {
-        id: loadSettingsProc
-        command: ["sh", "-c", "cat ~/.config/quickshell/widget_settings.json 2>/dev/null || echo '{}'"]
+        id: cmdProc
         running: false
+    }
+
+    function runCmd(args) {
+        cmdProc.running = false
+        cmdProc.command = args
+        cmdProc.running = true
+    }
+
+    function mediaAction(action) {
+        if (!hasPlayer) return
+        if (action === "play-pause") runCmd(["playerctl", "play-pause"])
+        else if (action === "next") runCmd(["playerctl", "next"])
+        else if (action === "previous") runCmd(["playerctl", "previous"])
+        else if (action === "forward") runCmd(["playerctl", "position", "10+"])
+        else if (action === "rewind") runCmd(["playerctl", "position", "10-"])
+        // refresh soon after action
+        refreshTimer.interval = 200
+        refreshTimer.restart()
+    }
+
+    function seekRatio(ratio) {
+        if (!hasPlayer || lengthSec <= 0) return
+        var sec = Math.round(Math.max(0, Math.min(1, ratio)) * lengthSec)
+        runCmd(["playerctl", "position", "" + sec])
+        positionSec = sec
+        updateProgress()
+    }
+
+    // ── Metadata poll ──
+    Process {
+        id: metaProc
+        running: false
+        command: [
+            "sh", "-c",
+            "playerctl metadata --format '{{status}}||{{title}}||{{artist}}||{{mpris:artUrl}}||{{position}}||{{mpris:length}}' 2>/dev/null || true"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var line = text.trim()
+                if (!line.length || line.indexOf("No players") >= 0) {
+                    root.hasPlayer = false
+                    root.status = "Stopped"
+                    return
+                }
+                var p = line.split("||")
+                if (p.length < 4) {
+                    root.hasPlayer = false
+                    return
+                }
+                root.hasPlayer = true
+                root.status = p[0] || "Paused"
+                root.title = p[1] || "Unknown"
+                root.artist = p[2] || ""
+                root.artUrl = (p[3] || "").replace(/^file:\/\//, "file://")
+                var posU = parseFloat(p[4] || "0") || 0
+                var lenU = parseFloat(p[5] || "0") || 0
+                // playerctl position/length are in microseconds
+                root.positionSec = posU / 1000000.0
+                root.lengthSec = lenU / 1000000.0
+                root.updateProgress()
+            }
+        }
+    }
+
+    function refreshMeta() {
+        metaProc.running = false
+        metaProc.running = true
+    }
+
+    Timer {
+        id: refreshTimer
+        interval: 1000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            refreshMeta()
+            interval = 1000
+        }
+    }
+
+    // ── Settings load/save ──
+    Process {
+        id: loadProc
+        running: false
+        command: ["sh", "-c", "cat ~/.config/quickshell/widget_settings.json 2>/dev/null || echo '{}'"]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
-                    var data = JSON.parse(text)
-                    if (data.media) {
-                        if (data.media.scale !== undefined) root.scaleFactor = Math.max(0.5, Math.min(2.5, data.media.scale))
-                        var w = Math.round(380 * root.scaleFactor)
-                        var h = Math.round(190 * root.scaleFactor)
-                        if (data.media.x !== undefined) root.posX = Math.max(10, Math.min(root.screenWidth - w - 10, data.media.x))
-                        if (data.media.y !== undefined) root.posY = Math.max(10, Math.min(root.screenHeight - h - 10, data.media.y))
+                    var d = JSON.parse(text)
+                    if (d.media) {
+                        if (d.media.scale !== undefined)
+                            root.scaleFactor = Math.max(0.5, Math.min(2.0, d.media.scale))
+                        if (d.media.x !== undefined) root.posX = d.media.x
+                        if (d.media.y !== undefined) root.posY = d.media.y
                     }
                 } catch (e) {}
             }
         }
     }
 
-    Process {
-        id: saveSettingsProc
-        running: false
-    }
+    Process { id: saveProc; running: false }
 
     function saveSettings() {
-        var script = "python3 -c 'import json, os; p=os.path.expanduser(\"~/.config/quickshell/widget_settings.json\"); d=json.load(open(p)) if os.path.exists(p) else {}; d[\"media\"]={\"x\":" + Math.round(root.x) + ",\"y\":" + Math.round(root.y) + ",\"scale\":" + root.scaleFactor.toFixed(2) + "}; open(p,\"w\").write(json.dumps(d,indent=2))'"
-        saveSettingsProc.command = ["sh", "-c", script]
-        saveSettingsProc.running = true
+        var script =
+            "python3 -c \"import json,os;" +
+            "p=os.path.expanduser('~/.config/quickshell/widget_settings.json');" +
+            "d=json.load(open(p)) if os.path.exists(p) else {};" +
+            "d['media']={'x':" + Math.round(root.x) +
+            ",'y':" + Math.round(root.y) +
+            ",'scale':" + root.scaleFactor.toFixed(2) + "};" +
+            "os.makedirs(os.path.dirname(p),exist_ok=True);" +
+            "open(p,'w').write(json.dumps(d,indent=2))\""
+        saveProc.running = false
+        saveProc.command = ["sh", "-c", script]
+        saveProc.running = true
     }
 
-    // ─── Built-in Demo Playlist for Seamless Playback ───
-    property var demoTracks: [
-        { title: "Pretty Patterns", artist: "ATLAS", duration: 225 },
-        { title: "Midnight Horizon", artist: "Pixel Waves", duration: 198 },
-        { title: "Summer Breeze", artist: "California Drive", duration: 240 },
-        { title: "Neon Sunset", artist: "Studio M3", duration: 210 }
-    ]
-    property int currentDemoTrackIndex: 0
+    Component.onCompleted: loadProc.running = true
 
-    // ─── Media State Properties ───
-    property string title: "Pretty Patterns"
-    property string artist: "ATLAS"
-    property string artUrl: ""
-    property string status: "Playing"
-    property real positionSec: 72
-    property real lengthSec: 225
-    property string posStr: "1:12"
-    property string lenStr: "3:45"
-    property real progress: 0.32
-    property bool hasActivePlayer: false
-
-    function fmtTime(seconds) {
-        var m = Math.floor(seconds / 60)
-        var s = Math.floor(seconds % 60)
-        return m + ":" + (s < 10 ? "0" + s : s)
-    }
-
-    // Process for executing media commands
-    Process {
-        id: controlProc
-        running: false
-    }
-
-    function sendMediaCmd(action) {
-        if (hasActivePlayer) {
-            if (action === "play-pause") controlProc.command = ["playerctl", "play-pause"]
-            else if (action === "next") controlProc.command = ["playerctl", "next"]
-            else if (action === "previous") controlProc.command = ["playerctl", "previous"]
-            else if (action === "rewind") controlProc.command = ["playerctl", "position", "10-"]
-            else if (action === "forward") controlProc.command = ["playerctl", "position", "10+"]
-            controlProc.running = true
-        } else {
-            // Built-in Player Simulation when no system MPRIS player is running
-            if (action === "play-pause") {
-                root.status = (root.status === "Playing") ? "Paused" : "Playing"
-            } else if (action === "next") {
-                root.currentDemoTrackIndex = (root.currentDemoTrackIndex + 1) % root.demoTracks.length
-                var nextTrk = root.demoTracks[root.currentDemoTrackIndex]
-                root.title = nextTrk.title
-                root.artist = nextTrk.artist
-                root.lengthSec = nextTrk.duration
-                root.positionSec = 0
-            } else if (action === "previous") {
-                root.currentDemoTrackIndex = (root.currentDemoTrackIndex - 1 + root.demoTracks.length) % root.demoTracks.length
-                var prevTrk = root.demoTracks[root.currentDemoTrackIndex]
-                root.title = prevTrk.title
-                root.artist = prevTrk.artist
-                root.lengthSec = prevTrk.duration
-                root.positionSec = 0
-            } else if (action === "rewind") {
-                root.positionSec = Math.max(0, root.positionSec - 10)
-            } else if (action === "forward") {
-                root.positionSec = Math.min(root.lengthSec, root.positionSec + 10)
-            }
-            root.updateTimes()
-        }
-    }
-
-    function updateTimes() {
-        root.posStr = root.fmtTime(root.positionSec)
-        root.lenStr = root.lengthSec > 0 ? root.fmtTime(root.lengthSec) : "0:00"
-        root.progress = root.lengthSec > 0 ? Math.min(1.0, root.positionSec / root.lengthSec) : 0
-    }
-
-    // ─── MPRIS Process Query ───
-    Process {
-        id: mediaProc
-        command: ["playerctl", "metadata", "--format", "{{title}};;{{artist}};;{{mpris:artUrl}};;{{position}};;{{mpris:length}};;{{status}}"]
-        running: false
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var line = text.trim()
-                if (line.length > 0 && line.includes(";;") && !line.includes("No players found")) {
-                    var parts = line.split(";;")
-                    root.hasActivePlayer = true
-                    root.title = parts[0] || "Unknown Title"
-                    root.artist = parts[1] || "Unknown Artist"
-                    root.artUrl = parts[2] || ""
-
-                    var posMicro = parseFloat(parts[3]) || 0
-                    var lenMicro = parseFloat(parts[4]) || 0
-                    root.positionSec = posMicro / 1000000.0
-                    root.lengthSec = lenMicro / 1000000.0
-                    root.status = parts[5] || "Playing"
-
-                    root.updateTimes()
-                } else {
-                    root.hasActivePlayer = false
-                }
-            }
-        }
-    }
-
-    // Playback Progress Timer
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            mediaProc.running = true
-            if (!root.hasActivePlayer && root.status === "Playing") {
-                root.positionSec = (root.positionSec + 1) % (root.lengthSec + 1)
-                root.updateTimes()
-            }
-        }
-    }
-
-    Component.onCompleted: {
-        loadSettingsProc.running = true
-        mediaProc.running = true
-    }
-
-    // ─── Material You / M3 Dark Palette ───
-    readonly property color colBg: "#2B353A"              // Android Pixel Dark Slate Card
-    readonly property color colPillBg: "#3D484E"          // Control Pill / Inactive Track
-    readonly property color colAccent: "#C2E7FF"          // M3 Light Cyan Active Accent
-    readonly property color colAccentDark: "#1E2A30"      // Dark Fill for Scalloped Button Icon
-    readonly property color colTextPrimary: "#E1E2E5"
-    readonly property color colTextSecondary: "#A0ACAC"
-
-    // ─── Scaled Visual Content ───
+    // ── UI (scaled) ──
     Item {
-        id: scaledContent
-        width: 380
-        height: 190
+        id: stage
+        width: root.designW
+        height: root.designH
         scale: root.scaleFactor
         transformOrigin: Item.TopLeft
 
         Rectangle {
+            id: card
             anchors.fill: parent
-            color: root.colBg
             radius: 28
+            color: root.colBg
             antialiasing: true
+            clip: true
+
+            // DRAG LAYER — behind controls so buttons still receive clicks
+            MouseArea {
+                id: dragLayer
+                anchors.fill: parent
+                z: 0
+                hoverEnabled: true
+                drag.target: root
+                drag.axis: Drag.XAndYAxis
+                drag.minimumX: 10
+                drag.maximumX: Math.max(10, root.screenWidth - root.width - 10)
+                drag.minimumY: 10
+                drag.maximumY: Math.max(10, root.screenHeight - root.height - 10)
+                cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                onReleased: {
+                    if (drag.active) {
+                        root.posX = root.x
+                        root.posY = root.y
+                        root.saveSettings()
+                    }
+                }
+                onWheel: (w) => {
+                    var ds = w.angleDelta.y / 1200.0
+                    root.scaleFactor = Math.round(Math.max(0.5, Math.min(2.0, root.scaleFactor + ds)) * 100) / 100
+                    root.saveSettings()
+                }
+            }
 
             Column {
+                z: 1
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 10
+                anchors.margins: 20
+                spacing: 18
 
-                // Top Section: Album Art + Song Title/Artist
+                // ── Header: art + text + controls ──
                 Row {
                     width: parent.width
-                    height: 80
-                    spacing: 12
+                    height: 88
+                    spacing: 14
 
-                    // Album Art Squircle
+                    // Album art
                     Rectangle {
-                        width: 80
-                        height: 80
+                        width: 88
+                        height: 88
                         radius: 20
-                        color: root.colPillBg
+                        color: root.colPill
                         clip: true
                         antialiasing: true
 
@@ -218,387 +246,307 @@ Item {
                             anchors.fill: parent
                             source: root.artUrl
                             fillMode: Image.PreserveAspectCrop
-                            visible: root.artUrl.length > 0 && status === Image.Ready
                             asynchronous: true
+                            visible: status === Image.Ready && root.artUrl.length > 0
                         }
 
-                        // Pixel Fallback Vector Art
-                        Item {
+                        // vinyl-style fallback
+                        Rectangle {
                             anchors.fill: parent
-                            visible: !root.artUrl || root.artUrl.length === 0
-
+                            visible: root.artUrl.length === 0 || true
+                            z: -1
+                            gradient: Gradient {
+                                GradientStop { position: 0; color: "#3F484C" }
+                                GradientStop { position: 1; color: "#1E2A30" }
+                            }
+                        }
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 52; height: 52; radius: 26
+                            color: "#A2C9C2"
+                            visible: root.artUrl.length === 0
                             Rectangle {
-                                anchors.fill: parent
-                                color: "#3B474D"
+                                anchors.centerIn: parent
+                                width: 16; height: 16; radius: 8
+                                color: root.colBg
+                            }
+                        }
+                    }
+
+                    // Title / artist
+                    Column {
+                        width: parent.width - 88 - 14 - ctrlPill.width - 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+
+                        Text {
+                            width: parent.width
+                            text: root.title
+                            color: root.colText
+                            font.pixelSize: 16
+                            font.bold: true
+                            elide: Text.ElideRight
+                            maximumLineCount: 2
+                            wrapMode: Text.Wrap
+                        }
+                        Text {
+                            width: parent.width
+                            text: root.artist
+                            color: root.colMuted
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    // Control pill
+                    Rectangle {
+                        id: ctrlPill
+                        width: 132
+                        height: 52
+                        radius: 26
+                        color: root.colPill
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            // Prev
+                            Item {
+                                width: 32; height: 32
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "⏮"
+                                    color: root.colText
+                                    font.pixelSize: 16
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.mediaAction("previous")
+                                }
                             }
 
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.fillStyle = "#A2C9C2"
-                                    ctx.beginPath()
-                                    ctx.arc(40, 40, 26, 0, Math.PI * 2)
-                                    ctx.fill()
-                                    ctx.fillStyle = "#2B353A"
-                                    ctx.beginPath()
-                                    ctx.arc(40, 40, 9, 0, Math.PI * 2)
-                                    ctx.fill()
+                            // Scalloped play/pause
+                            Item {
+                                width: 44; height: 44
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Canvas {
+                                    id: playCanvas
+                                    anchors.fill: parent
+                                    antialiasing: true
+                                    Connections {
+                                        target: root
+                                        function onStatusChanged() { playCanvas.requestPaint() }
+                                    }
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
+                                        var cx = width / 2, cy = height / 2
+                                        var n = 12, ro = 21, ri = 17.5
+                                        ctx.beginPath()
+                                        for (var i = 0; i < n * 2; i++) {
+                                            var a = (i * Math.PI) / n - Math.PI / 2
+                                            var r = (i % 2 === 0) ? ro : ri
+                                            var x = cx + r * Math.cos(a)
+                                            var y = cy + r * Math.sin(a)
+                                            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                                        }
+                                        ctx.closePath()
+                                        ctx.fillStyle = root.colAccent
+                                        ctx.fill()
+
+                                        ctx.fillStyle = root.colOnAccent
+                                        if (root.status === "Playing") {
+                                            ctx.fillRect(cx - 6, cy - 8, 4, 16)
+                                            ctx.fillRect(cx + 2, cy - 8, 4, 16)
+                                        } else {
+                                            ctx.beginPath()
+                                            ctx.moveTo(cx - 5, cy - 9)
+                                            ctx.lineTo(cx + 9, cy)
+                                            ctx.lineTo(cx - 5, cy + 9)
+                                            ctx.closePath()
+                                            ctx.fill()
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.mediaAction("play-pause")
+                                }
+                            }
+
+                            // Next
+                            Item {
+                                width: 32; height: 32
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "⏭"
+                                    color: root.colText
+                                    font.pixelSize: 16
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.mediaAction("next")
                                 }
                             }
                         }
                     }
-
-                    // Title & Artist Column
-                    Column {
-                        width: parent.width - 80 - 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 4
-
-                        Text {
-                            text: root.title
-                            color: root.colTextPrimary
-                            font.pixelSize: 16
-                            font.bold: true
-                            elide: Text.ElideRight
-                            width: parent.width
-                            font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
-                        }
-
-                        Text {
-                            text: root.artist
-                            color: root.colTextSecondary
-                            font.pixelSize: 13
-                            elide: Text.ElideRight
-                            width: parent.width
-                            font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
-                        }
-                    }
                 }
 
-                // Middle Section: Material 3 Progress Track with Thumb Handle
+                // ── Progress ──
                 Column {
                     width: parent.width
-                    spacing: 4
+                    spacing: 6
 
                     Item {
-                        id: progressTrack
+                        id: track
                         width: parent.width
-                        height: 14
+                        height: 16
 
-                        // Inactive Track
                         Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             width: parent.width
                             height: 6
                             radius: 3
-                            color: root.colPillBg
-                            antialiasing: true
+                            color: root.colPill
                         }
-
-                        // Active Track (Accent Pill)
                         Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             width: Math.max(6, parent.width * root.progress)
                             height: 6
                             radius: 3
                             color: root.colAccent
-                            antialiasing: true
                         }
-
-                        // M3 Slider Thumb Handle Indicator
                         Rectangle {
-                            width: 6
-                            height: 14
-                            radius: 3
+                            width: 8; height: 16; radius: 4
                             color: root.colAccent
-                            x: Math.min(parent.width - width, Math.max(0, parent.width * root.progress - width / 2))
                             anchors.verticalCenter: parent.verticalCenter
-                            antialiasing: true
+                            x: Math.min(parent.width - width,
+                                        Math.max(0, parent.width * root.progress - width / 2))
                         }
 
-                        // Interactive Seek Click/Drag
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: (mouse) => {
-                                var ratio = Math.max(0, Math.min(1.0, mouse.x / width))
-                                root.progress = ratio
-                                root.positionSec = Math.round(ratio * root.lengthSec)
-                                root.updateTimes()
-                                if (root.hasActivePlayer) {
-                                    controlProc.command = ["playerctl", "position", root.positionSec]
-                                    controlProc.running = true
-                                }
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: (m) => root.seekRatio(m.x / width)
+                            onPositionChanged: (m) => {
+                                if (pressed) root.seekRatio(m.x / width)
                             }
                         }
                     }
 
-                    // Duration Timers Row
                     Row {
                         width: parent.width
-
                         Text {
                             text: root.posStr
-                            color: root.colTextSecondary
-                            font.pixelSize: 10
+                            color: root.colMuted
+                            font.pixelSize: 11
                             font.bold: true
-                            font.family: "Google Sans Flex, Google Sans, Inter, monospace"
                         }
-
-                        Item {
-                            width: Math.max(0, parent.width - parent.children[0].width - parent.children[2].width)
-                            height: 1
-                        }
-
+                        Item { width: parent.width - 80; height: 1 }
                         Text {
                             text: root.lenStr
-                            color: root.colTextSecondary
-                            font.pixelSize: 10
+                            color: root.colMuted
+                            font.pixelSize: 11
                             font.bold: true
-                            font.family: "Google Sans Flex, Google Sans, Inter, monospace"
                         }
                     }
                 }
 
-                // Bottom Section: Complete Playback Controls Row (Rewind, Prev, Play/Pause Scallop, Next, Forward)
-                Rectangle {
+                // Extra: ±10s row
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 24
+
+                    Rectangle {
+                        width: 64; height: 32; radius: 16
+                        color: root.colPill
+                        Text {
+                            anchors.centerIn: parent
+                            text: "−10s"
+                            color: root.colText
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.mediaAction("rewind")
+                        }
+                    }
+                    Rectangle {
+                        width: 64; height: 32; radius: 16
+                        color: root.colPill
+                        Text {
+                            anchors.centerIn: parent
+                            text: "+10s"
+                            color: root.colText
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.mediaAction("forward")
+                        }
+                    }
+                }
+
+                // ── Lyrics-style block (visual match to your screenshot) ──
+                Item {
                     width: parent.width
-                    height: 48
-                    radius: 24
-                    color: root.colPillBg
-                    antialiasing: true
+                    height: 160
 
-                    Row {
+                    Column {
                         anchors.centerIn: parent
-                        spacing: 12
+                        width: parent.width * 0.92
+                        spacing: 10
 
-                        // Rewind (-10s) Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.strokeStyle = root.colTextPrimary
-                                    ctx.lineWidth = 1.8
-                                    ctx.beginPath()
-                                    ctx.arc(16, 16, 9, Math.PI * 0.2, Math.PI * 1.8, true)
-                                    ctx.stroke()
-
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.beginPath()
-                                    ctx.moveTo(8, 8)
-                                    ctx.lineTo(13, 11)
-                                    ctx.lineTo(12, 6)
-                                    ctx.closePath()
-                                    ctx.fill()
-
-                                    ctx.font = "bold 8px sans-serif"
-                                    ctx.textAlign = "center"
-                                    ctx.textBaseline = "middle"
-                                    ctx.fillText("10", 16, 17)
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("rewind")
-                            }
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: root.hasPlayer ? "Now playing" : "No active MPRIS player"
+                            color: root.colMuted
+                            opacity: 0.45
+                            font.pixelSize: 12
                         }
-
-                        // Previous Track Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.fillRect(9, 10, 2, 12)
-                                    ctx.beginPath()
-                                    ctx.moveTo(21, 10)
-                                    ctx.lineTo(13, 16)
-                                    ctx.lineTo(21, 22)
-                                    ctx.closePath()
-                                    ctx.fill()
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("previous")
-                            }
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: root.artist.length ? root.artist : "—"
+                            color: root.colMuted
+                            opacity: 0.7
+                            font.pixelSize: 14
                         }
-
-                        // Scalloped Play / Pause Main Button (Pixel M3 Style)
-                        Item {
-                            width: 42
-                            height: 42
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                id: scallopCanvas
-                                anchors.fill: parent
-                                antialiasing: true
-
-                                Connections {
-                                    target: root
-                                    function onStatusChanged() { scallopCanvas.requestPaint() }
-                                }
-
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    var cx = width / 2
-                                    var cy = height / 2
-                                    var rOuter = 20
-                                    var rInner = 16.5
-                                    var points = 12
-
-                                    // Scalloped Background
-                                    ctx.beginPath()
-                                    for (var i = 0; i < points * 2; i++) {
-                                        var angle = (i * Math.PI) / points
-                                        var r = (i % 2 === 0) ? rOuter : rInner
-                                        var x = cx + r * Math.cos(angle)
-                                        var y = cy + r * Math.sin(angle)
-                                        if (i === 0) ctx.moveTo(x, y)
-                                        else ctx.lineTo(x, y)
-                                    }
-                                    ctx.closePath()
-                                    ctx.fillStyle = root.colAccent
-                                    ctx.fill()
-
-                                    // Vector Play / Pause Icon
-                                    ctx.fillStyle = root.colAccentDark
-                                    if (root.status === "Playing") {
-                                        ctx.fillRect(cx - 5.5, cy - 7, 4, 14)
-                                        ctx.fillRect(cx + 1.5, cy - 7, 4, 14)
-                                    } else {
-                                        ctx.beginPath()
-                                        ctx.moveTo(cx - 4, cy - 8)
-                                        ctx.lineTo(cx + 7, cy)
-                                        ctx.lineTo(cx - 4, cy + 8)
-                                        ctx.closePath()
-                                        ctx.fill()
-                                    }
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("play-pause")
-                            }
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: root.title
+                            color: root.colText
+                            font.pixelSize: 17
+                            font.bold: true
                         }
-
-                        // Next Track Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.beginPath()
-                                    ctx.moveTo(11, 10)
-                                    ctx.lineTo(19, 16)
-                                    ctx.lineTo(11, 22)
-                                    ctx.closePath()
-                                    ctx.fill()
-                                    ctx.fillRect(21, 10, 2, 12)
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("next")
-                            }
-                        }
-
-                        // Forward (+10s) Vector Button
-                        Item {
-                            width: 32
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Canvas {
-                                anchors.fill: parent
-                                antialiasing: true
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.strokeStyle = root.colTextPrimary
-                                    ctx.lineWidth = 1.8
-                                    ctx.beginPath()
-                                    ctx.arc(16, 16, 9, Math.PI * 1.2, Math.PI * 0.8, false)
-                                    ctx.stroke()
-
-                                    ctx.fillStyle = root.colTextPrimary
-                                    ctx.beginPath()
-                                    ctx.moveTo(24, 8)
-                                    ctx.lineTo(19, 11)
-                                    ctx.lineTo(20, 6)
-                                    ctx.closePath()
-                                    ctx.fill()
-
-                                    ctx.font = "bold 8px sans-serif"
-                                    ctx.textAlign = "center"
-                                    ctx.textBaseline = "middle"
-                                    ctx.fillText("10", 16, 17)
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.sendMediaCmd("forward")
-                            }
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: root.status === "Playing" ? "▶ Playing" : (root.status === "Paused" ? "⏸ Paused" : "■ Stopped")
+                            color: root.colMuted
+                            opacity: 0.55
+                            font.pixelSize: 13
                         }
                     }
                 }
             }
-        }
-    }
-
-    // ─── Drag & Resize MouseArea ───
-    MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        drag.target: root
-        drag.axis: Drag.XAndYAxis
-        drag.minimumX: 10
-        drag.maximumX: Math.max(10, root.screenWidth - root.width - 10)
-        drag.minimumY: 10
-        drag.maximumY: Math.max(10, root.screenHeight - root.height - 10)
-        cursorShape: drag.active ? Qt.ClosedHandCursor : (containsMouse ? Qt.OpenHandCursor : Qt.ArrowCursor)
-
-        onReleased: {
-            root.posX = root.x
-            root.posY = root.y
-            root.saveSettings()
-        }
-
-        onWheel: (wheel) => {
-            var delta = wheel.angleDelta.y / 1200.0
-            var newScale = Math.max(0.5, Math.min(2.5, root.scaleFactor + delta))
-            root.scaleFactor = Math.round(newScale * 100) / 100
-            root.saveSettings()
         }
     }
 }
