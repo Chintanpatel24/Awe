@@ -231,10 +231,11 @@ Item {
                                 Column {
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
-                                    horizontalAlignment: Text.AlignRight
                                     spacing: 4
 
                                     Text {
+                                        anchors.right: parent.right
+                                        horizontalAlignment: Text.AlignRight
                                         text: modelData.time
                                         color: root.colTextPrimary
                                         font.pixelSize: 16
