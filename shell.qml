@@ -30,6 +30,8 @@ ShellRoot {
                 Region { item: weatherWidget }
                 Region { item: posterWidget }
                 Region { item: batteryWidget }
+                Region { item: worldclockWidget }
+                Region { item: sunmoonWidget }
             }
 
             Item {
@@ -74,6 +76,18 @@ ShellRoot {
 
                 BatteryWidget {
                     id: batteryWidget
+                    screenWidth: desktopWindow.width
+                    screenHeight: desktopWindow.height
+                }
+
+                WorldClockWidget {
+                    id: worldclockWidget
+                    screenWidth: desktopWindow.width
+                    screenHeight: desktopWindow.height
+                }
+
+                SunMoonWidget {
+                    id: sunmoonWidget
                     screenWidth: desktopWindow.width
                     screenHeight: desktopWindow.height
                 }
