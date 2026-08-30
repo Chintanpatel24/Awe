@@ -4,32 +4,97 @@ import Quickshell.Io
 
 Item {
     id: root
-
     property real screenWidth: 1920
     property real screenHeight: 1080
+
+    // Position & sizing properties
     property real posX: 400
     property real posY: 480
-    property real scaleFactor: 0.9
+    property real scaleFactor: 0.85
 
-    readonly property int designSize: 200
-    width: Math.round(designSize * scaleFactor)
-    height: Math.round(designSize * scaleFactor)
-    x: Math.max(10, Math.min(screenWidth - width - 10, posX))
-    y: Math.max(10, Math.min(screenHeight - height - 10, posY))
+    x: Math.max(10, Math.min(root.screenWidth - root.width - 10, posX))
+    y: Math.max(10, Math.min(root.screenHeight - root.height - 10, posY))
+    width: Math.round(200 * scaleFactor)
+    height: Math.round(200 * scaleFactor)
 
+    // User customized image path, temp preview path, and shape index
     property string imagePath: ""
-    property string pendingPath: ""
+    property string tempPathInput: ""
     property int shapeIndex: 0
-    property bool showConfirm: false
+    property bool showPathDialog: false
 
-    readonly property color colBg: "#1E2A30"
-    readonly property color colSurface: "#2B3236"
-    readonly property color colPill: "#3F484C"
-    readonly property color colAccent: "#C2E7FF"
-    readonly property color colOnAccent: "#1E2A30"
-    readonly property color colText: "#E3E2E6"
-    readonly property color colMuted: "#A0A8AC"
+    // ─── Settings Persistence ───
+    Process {
+        id: loadSettingsProc
+        command: ["sh", "-c", "cat ~/.config/quickshell/widget_settings.json 2>/dev/null || echo '{}'"]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    var data = JSON.parse(text)
+                    if (data.poster) {
+                        if (data.poster.scale !== undefined) root.scaleFactor = Math.max(0.5, Math.min(2.5, data.poster.scale))
+                        var w = Math.round(200 * root.scaleFactor)
+                        var h = Math.round(200 * root.scaleFactor)
+                        if (data.poster.x !== undefined) root.posX = Math.max(10, Math.min(root.screenWidth - w - 10, data.poster.x))
+                        if (data.poster.y !== undefined) root.posY = Math.max(10, Math.min(root.screenHeight - h - 10, data.poster.y))
+                        if (data.poster.imagePath !== undefined) root.imagePath = data.poster.imagePath
+                        if (data.poster.shapeIndex !== undefined) root.shapeIndex = data.poster.shapeIndex
+                    }
+                } catch (e) {}
+            }
+        }
+    }
 
+    Process {
+        id: saveSettingsProc
+        running: false
+    }
+
+    function saveSettings() {
+        var safePath = root.imagePath.replace(/'/g, "'\\''")
+        var script = "python3 -c 'import json, os; p=os.path.expanduser(\"~/.config/quickshell/widget_settings.json\"); d=json.load(open(p)) if os.path.exists(p) else {}; d[\"poster\"]={\"x\":" + Math.round(root.x) + ",\"y\":" + Math.round(root.y) + ",\"scale\":" + root.scaleFactor.toFixed(2) + ",\"imagePath\":\"" + safePath + "\",\"shapeIndex\":" + root.shapeIndex + "}; open(p,\"w\").write(json.dumps(d,indent=2))'"
+        saveSettingsProc.command = ["sh", "-c", script]
+        saveSettingsProc.running = true
+    }
+
+    // Process to ask user for path / file via Zenity / Python GUI prompt on right-click option
+    Process {
+        id: pathPromptProc
+        command: ["python3", "-c", "import tkinter as tk, tkinter.filedialog as fd, tkinter.simpledialog as sd; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path=sd.askstring('Image Path', 'Paste image file path or URL:'); print(path if path else '')"]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var selected = text.trim()
+                if (selected.length > 0) {
+                    root.tempPathInput = selected
+                    root.showPathDialog = true
+                }
+            }
+        }
+    }
+
+    // Process to open standard file chooser
+    Process {
+        id: pickerProc
+        command: ["python3", "-c", "import tkinter as tk, tkinter.filedialog as fd; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path=fd.askopenfilename(title='Select Image for Frame', filetypes=[('Images', '*.png *.jpg *.jpeg *.webp *.bmp *.gif')]); print(path if path else '')"]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var selected = text.trim()
+                if (selected.length > 0) {
+                    root.tempPathInput = selected
+                    root.showPathDialog = true
+                }
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        loadSettingsProc.running = true
+    }
+
+    // ─── Smooth / Curved Shapes ───
     property var shapeNames: [
         "circle", "squircle", "stadium_h", "arch",
         "semicircle_top", "ellipse", "pebble", "pillow",
@@ -37,391 +102,323 @@ Item {
         "pill_v", "heart"
     ]
 
-    // ── Settings ──
-    Process {
-        id: loadProc
-        running: false
-        command: ["sh", "-c", "cat ~/.config/quickshell/widget_settings.json 2>/dev/null || echo '{}'"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    var d = JSON.parse(text)
-                    if (d.poster) {
-                        if (d.poster.scale !== undefined)
-                            root.scaleFactor = Math.max(0.5, Math.min(2.5, d.poster.scale))
-                        if (d.poster.x !== undefined) root.posX = d.poster.x
-                        if (d.poster.y !== undefined) root.posY = d.poster.y
-                        if (d.poster.imagePath !== undefined) root.imagePath = d.poster.imagePath
-                        if (d.poster.shapeIndex !== undefined) root.shapeIndex = d.poster.shapeIndex
-                    }
-                } catch (e) {}
-            }
-        }
-    }
+    function drawShapePath(ctx, shapeType, w, h) {
+        var cx = w / 2
+        var cy = h / 2
+        var r = Math.min(w, h) / 2 - 2
 
-    Process { id: saveProc; running: false }
-
-    function saveSettings() {
-        var safe = root.imagePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-        var script =
-            "python3 -c \"import json,os;" +
-            "p=os.path.expanduser('~/.config/quickshell/widget_settings.json');" +
-            "d=json.load(open(p)) if os.path.exists(p) else {};" +
-            "d['poster']={'x':" + Math.round(root.x) +
-            ",'y':" + Math.round(root.y) +
-            ",'scale':" + root.scaleFactor.toFixed(2) +
-            ",'imagePath':\\\"\" + safe + "\\\"" +
-            ",'shapeIndex':" + root.shapeIndex + "};" +
-            "os.makedirs(os.path.dirname(p),exist_ok=True);" +
-            "open(p,'w').write(json.dumps(d,indent=2))\""
-        saveProc.running = false
-        saveProc.command = ["sh", "-c", script]
-        saveProc.running = true
-    }
-
-    // File pickers (zenity first)
-    Process {
-        id: filePicker
-        running: false
-        command: ["sh", "-c",
-            "zenity --file-selection --title='Select Image' " +
-            "--file-filter='Images | *.png *.jpg *.jpeg *.webp *.bmp *.gif' 2>/dev/null || true"
-        ]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var s = text.trim()
-                if (s.length > 0) {
-                    root.pendingPath = s
-                    root.showConfirm = true
-                }
-            }
-        }
-    }
-
-    Process {
-        id: pathPrompt
-        running: false
-        command: ["sh", "-c",
-            "zenity --entry --title='Image Path' --text='File path or URL:' 2>/dev/null || true"
-        ]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var s = text.trim()
-                if (s.length > 0) {
-                    root.pendingPath = s
-                    root.showConfirm = true
-                }
-            }
-        }
-    }
-
-    function toImageUrl(p) {
-        if (!p || p.length === 0) return ""
-        if (p.indexOf("://") >= 0) return p
-        if (p.charAt(0) === "/") return "file://" + p
-        return p
-    }
-
-    function drawShapePath(ctx, shape, w, h) {
-        var cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 2
         ctx.beginPath()
 
-        if (shape === "circle") {
+        if (shapeType === "circle") {
             ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        } else if (shape === "squircle") {
-            var rad = r * 0.45
-            ctx.moveTo(cx - r + rad, cy - r)
-            ctx.lineTo(cx + r - rad, cy - r)
-            ctx.quadraticCurveTo(cx + r, cy - r, cx + r, cy - r + rad)
-            ctx.lineTo(cx + r, cy + r - rad)
-            ctx.quadraticCurveTo(cx + r, cy + r, cx + r - rad, cy + r)
-            ctx.lineTo(cx - r + rad, cy + r)
-            ctx.quadraticCurveTo(cx - r, cy + r, cx - r, cy + r - rad)
-            ctx.lineTo(cx - r, cy - r + rad)
-            ctx.quadraticCurveTo(cx - r, cy - r, cx - r + rad, cy - r)
-        } else if (shape === "stadium_h") {
-            var ry = r * 0.62
-            ctx.moveTo(cx - r + ry, cy - ry)
-            ctx.lineTo(cx + r - ry, cy - ry)
-            ctx.arc(cx + r - ry, cy, ry, -Math.PI / 2, Math.PI / 2)
-            ctx.lineTo(cx - r + ry, cy + ry)
-            ctx.arc(cx - r + ry, cy, ry, Math.PI / 2, 3 * Math.PI / 2)
-        } else if (shape === "arch") {
+        } else if (shapeType === "squircle") {
+            var radius = r * 0.45
+            ctx.moveTo(cx - r + radius, cy - r)
+            ctx.lineTo(cx + r - radius, cy - r)
+            ctx.quadraticCurveTo(cx + r, cy - r, cx + r, cy - r + radius)
+            ctx.lineTo(cx + r, cy + r - radius)
+            ctx.quadraticCurveTo(cx + r, cy + r, cx + r - radius, cy + r)
+            ctx.lineTo(cx - r + radius, cy + r)
+            ctx.quadraticCurveTo(cx - r, cy + r, cx - r, cy + r - radius)
+            ctx.lineTo(cx - r, cy - r + radius)
+            ctx.quadraticCurveTo(cx - r, cy - r, cx - r + radius, cy - r)
+        } else if (shapeType === "stadium_h") {
+            var rx = r
+            var ry = r * 0.65
+            ctx.moveTo(cx - rx + ry, cy - ry)
+            ctx.lineTo(cx + rx - ry, cy - ry)
+            ctx.arc(cx + rx - ry, cy, ry, -Math.PI / 2, Math.PI / 2)
+            ctx.lineTo(cx - rx + ry, cy + ry)
+            ctx.arc(cx - rx + ry, cy, ry, Math.PI / 2, 3 * Math.PI / 2)
+        } else if (shapeType === "arch") {
             ctx.moveTo(cx - r, cy + r)
             ctx.lineTo(cx + r, cy + r)
             ctx.lineTo(cx + r, cy)
             ctx.arc(cx, cy, r, 0, Math.PI, true)
-            ctx.closePath()
-            return
-        } else if (shape === "semicircle_top") {
-            ctx.moveTo(cx - r, cy + r * 0.35)
-            ctx.arc(cx, cy + r * 0.35, r, Math.PI, 0, false)
-            ctx.closePath()
-            return
-        } else if (shape === "ellipse") {
-            ctx.save()
-            ctx.translate(cx, cy)
-            ctx.scale(1.0, 0.72)
-            ctx.arc(0, 0, r, 0, Math.PI * 2)
-            ctx.restore()
-        } else if (shape === "pebble") {
+            ctx.lineTo(cx - r, cy + r)
+        } else if (shapeType === "semicircle_top") {
+            ctx.moveTo(cx - r, cy + r * 0.3)
+            ctx.arc(cx, cy + r * 0.3, r, Math.PI, 0, false)
+            ctx.lineTo(cx - r, cy + r * 0.3)
+        } else if (shapeType === "ellipse") {
+            ctx.ellipse(cx - r, cy - r * 0.65, r * 2, r * 1.3)
+        } else if (shapeType === "pebble") {
             ctx.moveTo(cx - r * 0.8, cy - r * 0.5)
             ctx.bezierCurveTo(cx - r, cy - r, cx + r * 0.2, cy - r, cx + r * 0.9, cy - r * 0.4)
             ctx.bezierCurveTo(cx + r * 1.1, cy, cx + r * 0.8, cy + r * 0.9, cx, cy + r)
             ctx.bezierCurveTo(cx - r * 0.9, cy + r * 0.9, cx - r * 1.1, cy, cx - r * 0.8, cy - r * 0.5)
-        } else if (shape === "pillow") {
+        } else if (shapeType === "pillow") {
             ctx.moveTo(cx, cy - r)
             ctx.quadraticCurveTo(cx + r * 0.8, cy - r * 0.8, cx + r, cy)
             ctx.quadraticCurveTo(cx + r * 0.8, cy + r * 0.8, cx, cy + r)
             ctx.quadraticCurveTo(cx - r * 0.8, cy + r * 0.8, cx - r, cy)
             ctx.quadraticCurveTo(cx - r * 0.8, cy - r * 0.8, cx, cy - r)
-        } else if (shape === "scallop_8" || shape === "flower_4" || shape === "clover_4" || shape === "badge_4") {
-            var teeth = shape === "scallop_8" ? 8 : 4
-            var soft = shape === "badge_4"
+        } else if (shapeType === "scallop_8") {
+            var teeth = 8
+            var rInner = r * 0.82
             for (var a = 0; a <= 360; a += 2) {
-                var radA = a * Math.PI / 180
-                var wave = soft
-                    ? 0.75 + 0.25 * Math.abs(Math.sin(2 * radA))
-                    : (0.72 + 0.28 * (Math.cos(teeth * radA) + 1) / 2)
-                var rr = r * wave
-                var x = cx + rr * Math.sin(radA)
-                var y = cy - rr * Math.cos(radA)
-                if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                var rad = a * Math.PI / 180
+                var wave = (Math.cos(teeth * rad) + 1.0) / 2.0
+                var radiusVal = rInner + (r - rInner) * wave
+                var x = cx + radiusVal * Math.sin(rad)
+                var y = cy - radiusVal * Math.cos(rad)
+                if (a === 0) ctx.moveTo(x, y)
+                else ctx.lineTo(x, y)
             }
-        } else if (shape === "pill_v") {
-            var px = r * 0.55
-            ctx.moveTo(cx - px, cy - r + px)
-            ctx.arc(cx, cy - r + px, px, Math.PI, 0, false)
-            ctx.lineTo(cx + px, cy + r - px)
-            ctx.arc(cx, cy + r - px, px, 0, Math.PI, false)
-            ctx.closePath()
-            return
-        } else if (shape === "heart") {
+        } else if (shapeType === "flower_4" || shapeType === "clover_4") {
+            var rIn = r * 0.65
+            for (var fl = 0; fl <= 360; fl += 3) {
+                var flRad = fl * Math.PI / 180
+                var flR = rIn + (r - rIn) * (Math.cos(4 * flRad) + 1.0) / 2.0
+                var fx = cx + flR * Math.sin(flRad)
+                var fy = cy - flR * Math.cos(flRad)
+                if (fl === 0) ctx.moveTo(fx, fy)
+                else ctx.lineTo(fx, fy)
+            }
+        } else if (shapeType === "badge_4") {
+            for (var bg = 0; bg <= 360; bg += 3) {
+                var bgRad = bg * Math.PI / 180
+                var bgR = r * 0.75 + r * 0.25 * Math.abs(Math.sin(2 * bgRad))
+                var bx = cx + bgR * Math.sin(bgRad)
+                var by = cy - bgR * Math.cos(bgRad)
+                if (bg === 0) ctx.moveTo(bx, by)
+                else ctx.lineTo(bx, by)
+            }
+        } else if (shapeType === "pill_v") {
+            var pvy = r
+            var pvx = r * 0.55
+            ctx.moveTo(cx - pvx, cy - pvy + pvx)
+            ctx.arc(cx, cy - pvy + pvx, pvx, Math.PI, 0, false)
+            ctx.lineTo(cx + pvx, cy + pvy - pvx)
+            ctx.arc(cx, cy + pvy - pvx, pvx, 0, Math.PI, false)
+            ctx.lineTo(cx - pvx, cy - pvy + pvx)
+        } else if (shapeType === "heart") {
             ctx.moveTo(cx, cy + r * 0.75)
             ctx.bezierCurveTo(cx - r * 1.1, cy + r * 0.2, cx - r * 1.1, cy - r * 0.7, cx, cy - r * 0.35)
             ctx.bezierCurveTo(cx + r * 1.1, cy - r * 0.7, cx + r * 1.1, cy + r * 0.2, cx, cy + r * 0.75)
         } else {
             ctx.arc(cx, cy, r, 0, Math.PI * 2)
         }
+
         ctx.closePath()
     }
 
-    Component.onCompleted: loadProc.running = true
+    // Hidden source image component
+    Image {
+        id: sourceImage
+        source: root.imagePath
+        visible: false
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        onStatusChanged: {
+            shapeCanvas.requestPaint()
+        }
+    }
 
+    // Temp image preview for confirmation dialog
+    Image {
+        id: tempPreviewImage
+        source: root.tempPathInput
+        visible: false
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+    }
+
+    // ─── Scaled Visual Content ───
     Item {
-        id: stage
-        width: root.designSize
-        height: root.designSize
+        id: scaledContent
+        width: 200
+        height: 200
         scale: root.scaleFactor
         transformOrigin: Item.TopLeft
 
         Canvas {
-            id: canvas
+            id: shapeCanvas
             anchors.fill: parent
             antialiasing: true
-            renderTarget: Canvas.FramebufferObject
-            renderStrategy: Canvas.Cooperative
-
-            property string loadedUrl: ""
-
-            function reload() {
-                var url = root.toImageUrl(root.imagePath)
-                if (url.length === 0) {
-                    loadedUrl = ""
-                    requestPaint()
-                    return
-                }
-                if (loadedUrl !== url) {
-                    // unload previous if needed
-                    loadedUrl = url
-                    canvas.loadImage(url)
-                } else {
-                    requestPaint()
-                }
-            }
 
             Connections {
                 target: root
-                function onImagePathChanged() { canvas.reload() }
-                function onShapeIndexChanged() { canvas.requestPaint() }
+                function onImagePathChanged() { shapeCanvas.requestPaint() }
+                function onShapeIndexChanged() { shapeCanvas.requestPaint() }
             }
-
-            onImageLoaded: requestPaint()
-            Component.onCompleted: reload()
 
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.reset()
-                ctx.clearRect(0, 0, width, height)
 
-                var shape = root.shapeNames[root.shapeIndex % root.shapeNames.length]
-                root.drawShapePath(ctx, shape, width, height)
+                var currentShape = root.shapeNames[root.shapeIndex % root.shapeNames.length]
+
+                // Clip path to current shape
+                root.drawShapePath(ctx, currentShape, width, height)
                 ctx.clip()
 
-                var url = root.toImageUrl(root.imagePath)
-                if (url.length > 0 && canvas.isImageLoaded(url)) {
-                    // cover-fit
-                    ctx.drawImage(url, 0, 0, width, height)
+                if (sourceImage.status === Image.Ready && root.imagePath.length > 0) {
+                    // Draw custom image filled inside shape
+                    ctx.drawImage(sourceImage, 0, 0, width, height)
                 } else {
-                    var g = ctx.createLinearGradient(0, 0, width, height)
-                    g.addColorStop(0, "#3F484C")
-                    g.addColorStop(1, "#1E2A30")
-                    ctx.fillStyle = g
+                    // Placeholder material style fill when no image selected
+                    var grad = ctx.createLinearGradient(0, 0, width, height)
+                    grad.addColorStop(0, "#3D484E")
+                    grad.addColorStop(1, "#253035")
+                    ctx.fillStyle = grad
                     ctx.fill()
 
-                    ctx.fillStyle = root.colAccent
-                    ctx.font = "bold 12px sans-serif"
+                    // Text inside shape
+                    ctx.fillStyle = "#A2C9C2"
+                    ctx.font = "bold 12px 'Google Sans', sans-serif"
                     ctx.textAlign = "center"
                     ctx.textBaseline = "middle"
-                    ctx.fillText("Click · pick image", width / 2, height / 2 - 10)
-
-                    ctx.fillStyle = root.colMuted
-                    ctx.font = "11px sans-serif"
-                    ctx.fillText("Double-click · shape", width / 2, height / 2 + 10)
-                    ctx.fillText("Right-click · path", width / 2, height / 2 + 26)
+                    ctx.fillText("Right-click for Path / Pic", width / 2, height / 2 - 8)
+                    ctx.fillStyle = "#A0ACAC"
+                    ctx.font = "11px 'Google Sans', sans-serif"
+                    ctx.fillText("Double-tap for Shape", width / 2, height / 2 + 12)
                 }
             }
         }
 
-        // Confirm overlay
+        // Confirmation / Adjustment Dialog Overlay before setting
         Rectangle {
-            visible: root.showConfirm
+            id: pathConfirmOverlay
+            visible: root.showPathDialog
             anchors.fill: parent
             radius: 24
-            color: "#E61E2A30"
-            z: 20
-            border.color: root.colPill
-            border.width: 1
+            color: "#1E2A30"
+            border.color: "#3D484E"
+            border.width: 2
+            z: 100
 
             Column {
                 anchors.centerIn: parent
-                width: parent.width - 24
-                spacing: 10
+                spacing: 8
+                width: parent.width - 20
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Use this image?"
-                    color: root.colText
-                    font.bold: true
+                    text: "Set Image Path?"
+                    color: "#FFFFFF"
                     font.pixelSize: 13
+                    font.bold: true
+                    font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
                 }
+
                 Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    text: root.pendingPath
-                    color: root.colMuted
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root.tempPathInput.length > 25 ? "..." + root.tempPathInput.slice(-22) : root.tempPathInput
+                    color: "#A0ACAC"
                     font.pixelSize: 10
                     elide: Text.ElideMiddle
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    font.family: "Google Sans Flex, Google Sans, Inter, monospace"
                 }
+
                 Row {
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: 10
+
                     Rectangle {
-                        width: 72; height: 30; radius: 15
-                        color: root.colAccent
+                        width: 70
+                        height: 28
+                        radius: 14
+                        color: "#C2E7FF"
+
                         Text {
                             anchors.centerIn: parent
-                            text: "Apply"
-                            color: root.colOnAccent
+                            text: "Set Pic"
+                            color: "#1E2A30"
+                            font.pixelSize: 11
                             font.bold: true
-                            font.pixelSize: 12
+                            font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
                         }
+
                         MouseArea {
                             anchors.fill: parent
                             onClicked: {
-                                root.imagePath = root.pendingPath
-                                root.showConfirm = false
+                                root.imagePath = root.tempPathInput
+                                root.showPathDialog = false
                                 root.saveSettings()
                             }
                         }
                     }
+
                     Rectangle {
-                        width: 72; height: 30; radius: 15
-                        color: root.colPill
+                        width: 70
+                        height: 28
+                        radius: 14
+                        color: "#3D484E"
+
                         Text {
                             anchors.centerIn: parent
                             text: "Cancel"
-                            color: root.colText
-                            font.pixelSize: 12
+                            color: "#FFFFFF"
+                            font.pixelSize: 11
+                            font.family: "Google Sans Flex, Google Sans, Inter, sans-serif"
                         }
+
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: root.showConfirm = false
+                            onClicked: {
+                                root.showPathDialog = false
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
-        // Interaction (on top of canvas, under confirm)
-        MouseArea {
-            anchors.fill: parent
-            z: 10
-            hoverEnabled: true
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            drag.target: root
-            drag.axis: Drag.XAndYAxis
-            drag.minimumX: 10
-            drag.maximumX: Math.max(10, root.screenWidth - root.width - 10)
-            drag.minimumY: 10
-            drag.maximumY: Math.max(10, root.screenHeight - root.height - 10)
+    // Timer to differentiate single click vs double tap
+    Timer {
+        id: singleClickTimer
+        interval: 220
+        repeat: false
+        onTriggered: {
+            pickerProc.running = true
+        }
+    }
 
-            property bool dragged: false
-            property real pressX: 0
-            property real pressY: 0
+    // ─── Mouse Handling ───
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        drag.target: root
+        drag.axis: Drag.XAndYAxis
+        drag.minimumX: 10
+        drag.maximumX: Math.max(10, root.screenWidth - root.width - 10)
+        drag.minimumY: 10
+        drag.maximumY: Math.max(10, root.screenHeight - root.height - 10)
+        cursorShape: drag.active ? Qt.ClosedHandCursor : (containsMouse ? Qt.OpenHandCursor : Qt.ArrowCursor)
 
-            onPressed: (m) => {
-                dragged = false
-                pressX = m.x
-                pressY = m.y
-            }
-            onPositionChanged: (m) => {
-                if (Math.abs(m.x - pressX) > 4 || Math.abs(m.y - pressY) > 4)
-                    dragged = true
-            }
-            onReleased: {
-                if (dragged) {
-                    root.posX = root.x
-                    root.posY = root.y
-                    root.saveSettings()
-                }
-            }
-
-            Timer {
-                id: clickWait
-                interval: 240
-                onTriggered: {
-                    if (!parent.dragged && !root.showConfirm)
-                        filePicker.running = true
-                }
-            }
-
-            onClicked: (m) => {
-                if (dragged || root.showConfirm) return
-                if (m.button === Qt.RightButton) {
-                    clickWait.stop()
-                    pathPrompt.running = false
-                    pathPrompt.running = true
-                } else {
-                    clickWait.restart()
-                }
-            }
-
-            onDoubleClicked: (m) => {
-                if (m.button !== Qt.LeftButton) return
-                clickWait.stop()
-                if (dragged) return
+        onDoubleClicked: (mouse) => {
+            if (mouse.button === Qt.LeftButton) {
+                singleClickTimer.stop()
                 root.shapeIndex = (root.shapeIndex + 1) % root.shapeNames.length
                 root.saveSettings()
             }
+        }
 
-            onWheel: (w) => {
-                var ds = w.angleDelta.y / 1200.0
-                root.scaleFactor = Math.round(Math.max(0.5, Math.min(2.5, root.scaleFactor + ds)) * 100) / 100
-                root.saveSettings()
+        onClicked: (mouse) => {
+            if (mouse.button === Qt.RightButton) {
+                singleClickTimer.stop()
+                pathPromptProc.running = true
+            } else if (mouse.button === Qt.LeftButton) {
+                singleClickTimer.start()
             }
+        }
 
-            cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        onReleased: {
+            root.posX = root.x
+            root.posY = root.y
+            root.saveSettings()
+        }
+
+        onWheel: (wheel) => {
+            var delta = wheel.angleDelta.y / 1200.0
+            var newScale = Math.max(0.5, Math.min(2.5, root.scaleFactor + delta))
+            root.scaleFactor = Math.round(newScale * 100) / 100
+            root.saveSettings()
         }
     }
 }
