@@ -407,7 +407,7 @@ Item {
         drag.maximumY: Math.max(10, root.screenHeight - root.height - 10)
         cursorShape: drag.active ? Qt.ClosedHandCursor : (containsMouse ? Qt.OpenHandCursor : Qt.ArrowCursor)
 
-        onDoubleClicked: (mouse) => {
+        onDoubleClicked: function(mouse) {
             if (mouse.button === Qt.LeftButton) {
                 singleClickTimer.stop()
                 root.shapeIndex = (root.shapeIndex + 1) % root.shapeNames.length
@@ -415,7 +415,7 @@ Item {
             }
         }
 
-        onClicked: (mouse) => {
+        onClicked: function(mouse) {
             if (mouse.button === Qt.RightButton) {
                 singleClickTimer.stop()
                 pathPromptProc.running = true
@@ -430,7 +430,7 @@ Item {
             root.saveSettings()
         }
 
-        onWheel: (wheel) => {
+        onWheel: function(wheel) {
             var delta = wheel.angleDelta.y / 1200.0
             var newScale = Math.max(0.5, Math.min(2.5, root.scaleFactor + delta))
             root.scaleFactor = Math.round(newScale * 100) / 100

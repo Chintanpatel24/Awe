@@ -576,7 +576,7 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: (mouse) => {
+                            onClicked: function(mouse) {
                                 var ratio = Math.max(0, Math.min(1.0, mouse.x / width))
                                 root.progress = ratio
                                 root.positionSec = Math.round(ratio * root.lengthSec)
@@ -636,7 +636,7 @@ Item {
             root.saveSettings()
         }
 
-        onWheel: (wheel) => {
+        onWheel: function(wheel) {
             var delta = wheel.angleDelta.y / 1200.0
             var newScale = Math.max(0.5, Math.min(2.5, root.scaleFactor + delta))
             root.scaleFactor = Math.round(newScale * 100) / 100
