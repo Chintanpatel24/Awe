@@ -262,10 +262,11 @@ Item {
                     Column {
                         anchors.centerIn: parent
                         anchors.verticalCenterOffset: 12
-                        horizontalAlignment: Text.AlignHCenter
                         spacing: 2
 
                         Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            horizontalAlignment: Text.AlignHCenter
                             text: root.isDaytime ? root.daylightRemaining : root.moonPhaseName
                             color: root.colTextPrimary
                             font.pixelSize: 16
@@ -274,6 +275,8 @@ Item {
                         }
 
                         Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            horizontalAlignment: Text.AlignHCenter
                             text: root.isDaytime ? "Daylight remaining" : "Nighttime cycle"
                             color: root.colTextSecondary
                             font.pixelSize: 10
@@ -312,10 +315,11 @@ Item {
                     }
 
                     Column {
-                        horizontalAlignment: Text.AlignRight
                         spacing: 1
 
                         Text {
+                            anchors.right: parent.right
+                            horizontalAlignment: Text.AlignRight
                             text: "SUNSET"
                             color: root.colTextSecondary
                             font.pixelSize: 9
@@ -324,6 +328,8 @@ Item {
                         }
 
                         Text {
+                            anchors.right: parent.right
+                            horizontalAlignment: Text.AlignRight
                             text: root.sunsetStr
                             color: root.colTextPrimary
                             font.pixelSize: 11
