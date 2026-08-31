@@ -23,6 +23,22 @@ Item {
     property int shapeIndex: 0
     property bool showPathDialog: false
 
+    function formatPath(rawPath) {
+        if (!rawPath || rawPath.length === 0) return ""
+        var trimmed = rawPath.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("file://")) {
+            return trimmed
+        }
+        if (trimmed.startsWith("~/")) {
+            // Expand home directory if needed
+            return "file://" + trimmed
+        }
+        if (trimmed.startsWith("/")) {
+            return "file://" + trimmed
+        }
+        return trimmed
+    }
+
     // ─── Settings Persistence ───
     Process {
         id: loadSettingsProc
@@ -38,7 +54,7 @@ Item {
                         var h = Math.round(200 * root.scaleFactor)
                         if (data.poster.x !== undefined) root.posX = Math.max(10, Math.min(root.screenWidth - w - 10, data.poster.x))
                         if (data.poster.y !== undefined) root.posY = Math.max(10, Math.min(root.screenHeight - h - 10, data.poster.y))
-                        if (data.poster.imagePath !== undefined) root.imagePath = data.poster.imagePath
+                        if (data.poster.imagePath !== undefined) root.imagePath = root.formatPath(data.poster.imagePath)
                         if (data.poster.shapeIndex !== undefined) root.shapeIndex = data.poster.shapeIndex
                     }
                 } catch (e) {}
@@ -58,32 +74,32 @@ Item {
         saveSettingsProc.running = true
     }
 
-    // Process to ask user for path / file via Zenity / Python GUI prompt on right-click option
+    // Robust file chooser process with zenity / kdialog / python fallback
     Process {
-        id: pathPromptProc
-        command: ["python3", "-c", "import tkinter as tk, tkinter.filedialog as fd, tkinter.simpledialog as sd; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path=sd.askstring('Image Path', 'Paste image file path or URL:'); print(path if path else '')"]
+        id: pickerProc
+        command: ["sh", "-c", "if command -v zenity >/dev/null 2>&1; then zenity --file-selection --title='Select Poster Image'; elif command -v kdialog >/dev/null 2>&1; then kdialog --getopenfilename; else python3 -c \"import tkinter as tk, tkinter.filedialog as fd; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path=fd.askopenfilename(title='Select Poster Image'); print(path if path else '')\" 2>/dev/null; fi"]
         running: false
         stdout: StdioCollector {
             onStreamFinished: {
                 var selected = text.trim()
                 if (selected.length > 0) {
-                    root.tempPathInput = selected
+                    root.tempPathInput = root.formatPath(selected)
                     root.showPathDialog = true
                 }
             }
         }
     }
 
-    // Process to open standard file chooser
+    // Right-click prompt process with zenity / kdialog / python fallback
     Process {
-        id: pickerProc
-        command: ["python3", "-c", "import tkinter as tk, tkinter.filedialog as fd; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path=fd.askopenfilename(title='Select Image for Frame', filetypes=[('Images', '*.png *.jpg *.jpeg *.webp *.bmp *.gif')]); print(path if path else '')"]
+        id: pathPromptProc
+        command: ["sh", "-c", "if command -v zenity >/dev/null 2>&1; then zenity --entry --title='Image Path or URL' --text='Enter local path or web image URL:'; elif command -v kdialog >/dev/null 2>&1; then kdialog --inputbox 'Enter local path or web image URL:'; else python3 -c \"import tkinter as tk, tkinter.simpledialog as sd; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path=sd.askstring('Image Path', 'Paste image file path or URL:'); print(path if path else '')\" 2>/dev/null; fi"]
         running: false
         stdout: StdioCollector {
             onStreamFinished: {
                 var selected = text.trim()
                 if (selected.length > 0) {
-                    root.tempPathInput = selected
+                    root.tempPathInput = root.formatPath(selected)
                     root.showPathDialog = true
                 }
             }
@@ -269,7 +285,7 @@ Item {
                     ctx.font = "bold 12px 'Google Sans', sans-serif"
                     ctx.textAlign = "center"
                     ctx.textBaseline = "middle"
-                    ctx.fillText("Right-click for Path / Pic", width / 2, height / 2 - 8)
+                    ctx.fillText("Click to Select Pic", width / 2, height / 2 - 8)
                     ctx.fillStyle = "#A0ACAC"
                     ctx.font = "11px 'Google Sans', sans-serif"
                     ctx.fillText("Double-tap for Shape", width / 2, height / 2 + 12)
@@ -391,7 +407,7 @@ Item {
         drag.maximumY: Math.max(10, root.screenHeight - root.height - 10)
         cursorShape: drag.active ? Qt.ClosedHandCursor : (containsMouse ? Qt.OpenHandCursor : Qt.ArrowCursor)
 
-        onDoubleClicked: (mouse) => {
+        onDoubleClicked: function(mouse) {
             if (mouse.button === Qt.LeftButton) {
                 singleClickTimer.stop()
                 root.shapeIndex = (root.shapeIndex + 1) % root.shapeNames.length
@@ -399,7 +415,7 @@ Item {
             }
         }
 
-        onClicked: (mouse) => {
+        onClicked: function(mouse) {
             if (mouse.button === Qt.RightButton) {
                 singleClickTimer.stop()
                 pathPromptProc.running = true
@@ -414,7 +430,7 @@ Item {
             root.saveSettings()
         }
 
-        onWheel: (wheel) => {
+        onWheel: function(wheel) {
             var delta = wheel.angleDelta.y / 1200.0
             var newScale = Math.max(0.5, Math.min(2.5, root.scaleFactor + delta))
             root.scaleFactor = Math.round(newScale * 100) / 100
